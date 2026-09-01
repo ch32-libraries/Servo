@@ -1,0 +1,16 @@
+.pio
+.vscode
+.idea
+*.elf
+*.hex
+*.lst
+*.bin
+*.map
+*.o
+ch32fun/ch32fun/generated_*.ld
+**/.DS_Store
+
+# Local development tooling and process artifacts, not part of the library.
+.claude
+openspec
+.remember

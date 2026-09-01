@@ -1,0 +1,45 @@
+{
+  "name": "Servo",
+  "version": "0.1.0",
+  "description": "RC servo control for CH32V-family RISC-V microcontrollers, built directly on ch32fun. Two interchangeable pulse-generation backends selected at build time: TIM2 hardware PWM (up to 4 servos, no interrupts at all) or a SysTick compare-match backend that consumes no general-purpose timer, leaving TIM2 free for the rest of your firmware. Optional interrupt-driven smooth motion needs no polling from your main loop. Integer-only, no dynamic allocation, no Arduino core, no HAL.",
+  "keywords": [
+    "servo",
+    "pwm",
+    "rc-servo",
+    "systick",
+    "timer",
+    "ch32v003",
+    "ch32fun",
+    "riscv",
+    "wch",
+    "bare-metal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ch32-libraries/Servo.git"
+  },
+  "authors": [
+    {
+      "name": "Yurii Kucherenko",
+      "url": "https://github.com/Fyfar",
+      "maintainer": true
+    }
+  ],
+  "license": "ISC",
+  "homepage": "https://github.com/ch32-libraries/Servo",
+  "frameworks": "ch32v003fun",
+  "platforms": "ch32v",
+  "headers": "Servo.h",
+  "build": {
+    "srcDir": "src"
+  },
+  "export": {
+    "include": [
+      "src",
+      "examples/pio_servo_sweep",
+      "README.md",
+      "LICENSE",
+      "library.json"
+    ]
+  }
+}
