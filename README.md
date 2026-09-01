@@ -74,7 +74,7 @@ platform = https://github.com/Community-PIO-CH32V/platform-ch32v.git
 board = genericCH32V003F4P6
 framework = ch32v003fun
 
-lib_deps = fyfar/Servo
+lib_deps = ch32-libraries/Servo
 ```
 
 See `examples/pio_servo_sweep` for a complete standalone project.
@@ -84,6 +84,7 @@ See `examples/pio_servo_sweep` for a complete standalone project.
 Copy `src/Servo.h` and `src/Servo.cpp` into your project, then:
 
 ```make
+TARGET_MCU?=CH32V003          # ch32fun.mk has no default and errors without one
 ADDITIONAL_C_FILES+=path/to/Servo.cpp
 
 include path/to/ch32fun/ch32fun.mk
