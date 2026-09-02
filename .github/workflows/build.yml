@@ -27,8 +27,13 @@ jobs:
           done
 
   systick-backend:
-    # SysTick backend targets every family Servo.h supports; build each so a
-    # portability regression fails CI even without the hardware to flash it.
+    # One build per genuinely distinct compiled shape, not per chip: Servo.h's
+    # portability block is a single #if covering every family (no per-family
+    # branch), so CH32V002/004-007 compile identically (rv32ec_zmmul) and so do
+    # CH32X03x/CH32L103/CH32V20x (rv32imac, ilp32, no family-specific code).
+    # CH32V003 (rv32ec, no zmmul), CH32V10x (the one family with an actual
+    # #if defined(CH32V10x) branch in Servo.cpp) and CH32V30x (the only float
+    # ABI, rv32imafc) are each their own shape.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -36,14 +41,8 @@ jobs:
         mcu:
           - CH32V003
           - CH32V002
-          - CH32V004
-          - CH32V005
-          - CH32V006
-          - CH32V007
           - CH32V10x
           - CH32X03x
-          - CH32L103
-          - CH32V20x
           - CH32V30x
     steps:
       - uses: actions/checkout@v4
