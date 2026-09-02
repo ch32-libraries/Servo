@@ -16,7 +16,7 @@ jobs:
           submodules: recursive
 
       - name: Install RISC-V toolchain
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf libnewlib-dev
 
       - name: Build
         run: |
@@ -27,9 +27,8 @@ jobs:
           done
 
   systick-backend:
-    # SysTick backend targets every family Servo.h supports (see AGENTS.md
-    # roadmap); build each so a portability regression fails CI even without
-    # the hardware to flash it.
+    # SysTick backend targets every family Servo.h supports; build each so a
+    # portability regression fails CI even without the hardware to flash it.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -52,7 +51,7 @@ jobs:
           submodules: recursive
 
       - name: Install RISC-V toolchain
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf libnewlib-dev
 
       - name: Build
         run: make -C examples/servo_systick TARGET_MCU=${{ matrix.mcu }} servo_systick.elf
