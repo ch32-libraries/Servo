@@ -26,7 +26,7 @@ int main(void)
 ## Why two backends
 
 TIM2 is the only general-purpose timer on a CH32V003, and plenty of libraries
-already want it — including [Ticker](https://github.com/ch32-libraries/Ticker),
+already want it, including [Ticker](https://github.com/ch32-libraries/Ticker),
 which owns it outright. A servo library that can only work by taking TIM2 is
 unusable in exactly the projects that need it most.
 
@@ -50,8 +50,8 @@ need more than four servos, or you need a pin that is not a TIM2 channel.
 
 - Two build-time backends, TIM2 PWM or SysTick, with one shared API.
 - Optional smooth motion: `write()` sets a target and returns; the position
-  ramps there on its own. **No polling call in your main loop** under either
-  backend.
+  ramps there on its own, with no polling call needed in your main loop under
+  either backend.
 - Integer-only. No soft-float routines enter the link.
 - Microsecond and integer-degree APIs; the degree API compiles out.
 - No dynamic allocation, no runtime pin tables, no runtime validation.
@@ -60,9 +60,9 @@ need more than four servos, or you need a pin that is not a TIM2 channel.
 ## Prerequisites
 
 - A CH32V003 and [ch32fun](https://github.com/cnlohr/ch32fun).
-- A servo. Give it its **own power supply** — a hobby servo's stall current
-  will brown out an MCU sharing its rail — and tie the grounds together. Signal
-  is 3.3 V from the CH32V003; most servos accept that, some want 5 V logic.
+- A servo. Give it its own power supply (a hobby servo's stall current will
+  brown out an MCU sharing its rail) and tie the grounds together. Signal is
+  3.3 V from the CH32V003; most servos accept that, some want 5 V logic.
 
 ## Installation
 
@@ -114,15 +114,10 @@ applied when the servo attaches. Copying a `Servo` is a compile error, and a
 
 ### A note on file-scope servos
 
-`Servo servo;` at file scope works, but its **constructor** only runs if you set
+`Servo servo;` at file scope works, but its constructor only runs if you set
 `FUNCONF_SUPPORT_CONSTRUCTORS 1` in `funconfig.h`. Without it the object is
-zeroed in BSS and starts at `SERVO_MIN_US` instead of centre — harmless, but not
+zeroed in BSS and starts at `SERVO_MIN_US` instead of centre: harmless, but not
 what you wrote. A `Servo` declared inside a function needs nothing.
-
-(The library ships weak no-op `__cxa_atexit`/`__dso_handle` definitions so a
-file-scope object links at all under `-nostdlib`. On a chip whose `main()` never
-returns, a global's destructor never runs, so discarding that registration is
-correct rather than a shortcut.)
 
 ## Configuration
 
@@ -141,14 +136,25 @@ fails and says so.
 | `SERVO_MAX_US` | `2000` | pulse width at maximum position |
 | `SERVO_ANGLE_MAX` | `180` | degree span mapped onto that range |
 | `SERVO_MAX_SERVOS` | `4` | registry size |
-| `SERVO_TIM2_REMAP` | `0` | TIM2 output remap group, 0–3 |
+| `SERVO_TIM2_REMAP` | `0` | TIM2 output remap group, 0-3 |
+
+### Clock requirements
+
+- TIM2 backend: core clock must be a whole multiple of 1 MHz.
+- SysTick backend: core clock at least 8 MHz, or at least 1 MHz with
+  `FUNCONF_SYSTICK_USE_HCLK=1`.
+
+Any `FUNCONF_USE_HSI`/`FUNCONF_USE_HSE` and `FUNCONF_PLL_MULTIPLIER` choice
+that meets these is fine; every default ch32fun ships for a supported chip
+already does. An unsafe combination fails at build time rather than
+mis-timing your servo.
 
 ### Calibrate the range
 
-`1000`–`2000 µs` is a nominal figure, not a fact about your servo. Real units
-vary; many accept `500`–`2500 µs` and give you noticeably more travel, and two
+`1000`-`2000 µs` is a nominal figure, not a fact about your servo. Real units
+vary; many accept `500`-`2500 µs` and give you noticeably more travel, and two
 servos of the same model can differ. `SERVO_MIN_US`/`SERVO_MAX_US` is the
-calibration knob — sweep slowly outward and back off when the servo stalls or
+calibration knob. Sweep slowly outward and back off when the servo stalls or
 buzzes at the endpoint.
 
 ### TIM2 pin table
@@ -167,21 +173,15 @@ attach to pins from that row only.
 ⚠ `PD7` is also `NRST`. To use CH4 in groups 0 or 2 you must first disable the
 reset function via the option bytes (`minichlink -d`).
 
-**Package matters.** TSSOP20/QFN20 (`CH32V003F4P6`/`F4U6`) expose all 18 GPIO, so
+Package matters. TSSOP20/QFN20 (`CH32V003F4P6`/`F4U6`) expose all 18 GPIO, so
 every row above is usable. SOP16 (`CH32V003A4M6`, 14 GPIO) omits `PD0`, `PD2`,
-`PD3` and `PC5`, which makes **remap group 1 unusable there** (it needs both
+`PD3` and `PC5`, which makes remap group 1 unusable there (it needs both
 `PC5` and `PD2`) and costs CH2 in groups 0 and 2. SOP8 (`CH32V003J4M6`,
 6 GPIO) is more restricted still. Check your package's pinout before choosing a
 remap group.
 
-Passing a pin that is not in the configured row fails at **link** time with
-`undefined reference to servo_error__pin_is_not_a_tim2_channel_for_configured_remap`.
-That is the check working, not a bug. The pin must be a compile-time constant.
-
-> The comments on `AFIO_PCFR1_TIM2_REMAP_*` in ch32fun's `ch32v003hw.h` are
-> wrong for two entries (they give `CH4/PD4` for group 0 and `CH3/PD4` for
-> group 1). The table above follows the datasheet and ch32fun's own
-> `examples/tim2_pwm_remap`, which agree with each other.
+Passing a pin outside the configured row fails at link time by design, not
+silently. The pin must be a compile-time constant.
 
 ## Smooth motion
 
@@ -192,7 +192,7 @@ while (servo.isMoving()) { }       // optional
 ```
 
 The ramp is advanced once per frame from whichever interrupt the active backend
-already runs — the TIM2 update interrupt, or the SysTick handler. Your main loop
+already runs: the TIM2 update interrupt, or the SysTick handler. Your main loop
 does not have to call anything.
 
 Rates are quantised to whole microseconds per frame, so they come in 50 µs/s
@@ -229,66 +229,89 @@ Measured on CH32V003 at `-Os -flto`, as the increase over an empty
 | SysTick + degree API | 556 B | 32 B | 6 B |
 | SysTick + smoothing | 640 B | 32 B | 8 B |
 
-The plain TIM2 backend is the cheapest because it enables no interrupt at all,
-so none of its state has to be `volatile`. Enabling smoothing adds an interrupt
-handler, and every field that handler touches becomes `volatile` — which is most
-of the jump from 224 B to 688 B, not the ramp arithmetic itself.
-
-The degree API costs ~100 B because `rv32ec` has no hardware multiply: it is the
-only part of the library that needs a `__mulsi3`. Set `SERVO_ENABLE_ANGLE=0` if
-you only ever speak microseconds.
+Smoothing costs the most because it adds an interrupt handler, not because of
+the ramp math itself. The degree API costs about 100 B because this core has
+no hardware multiply. Set `SERVO_ENABLE_ANGLE=0` if you only ever speak
+microseconds.
 
 No soft-float symbols and no allocator symbols appear in any configuration.
 
 ## Impact on the chip
 
-**TIM2 backend.** Claims TIM2, its four channels, and the `AFIO->PCFR1` TIM2
-remap field. Sets the prescaler for a 1 MHz tick and the auto-reload for a 20 ms
-frame, so a compare register holds the pulse width in microseconds directly.
-Enables no interrupt unless `SERVO_SMOOTH` is set.
+### TIM2 backend
 
-**SysTick backend.** Claims the SysTick compare-match interrupt vector. It does
-**not** reset the counter, change its clock source, or enable auto-reload — it
-only moves the compare value forward. `Delay_Us()`, `funSysTick32()` and
-anything else reading `SysTick->CNT` keep working, and TIM2 is never touched.
+Claims TIM2, its four channels, and the `AFIO->PCFR1` TIM2 remap field. Sets
+the prescaler for a 1 MHz tick and the auto-reload for a 20 ms frame, so a
+compare register holds the pulse width in microseconds directly. Enables no
+interrupt unless `SERVO_SMOOTH` is set.
 
-Servos are pulsed one at a time in sequence rather than simultaneously, which
-keeps the scheduler O(1) per interrupt and staggers the servos' current inrush.
-The cost is that all pulse widths must fit inside one frame, capping the backend
-near nine servos; a `static_assert` enforces it.
+### SysTick backend
+
+Claims the SysTick compare-match interrupt vector. It does not reset the
+counter, change its clock source, or enable auto-reload: it only moves the
+compare value forward. `Delay_Us()`, `funSysTick32()` and anything else
+reading `SysTick->CNT` keep working, and TIM2 is never touched.
+
+Servos are pulsed one at a time rather than simultaneously, so all pulse
+widths must fit inside one frame. That caps the backend near nine servos,
+enforced at build time.
 
 ## Limitations
 
-- **The TIM2 backend cannot coexist with any other TIM2 user**, including
+- The TIM2 backend cannot coexist with any other TIM2 user, including
   `Ticker`. This is what "uses TIM2" means, not a bug we can fix. Use the
   SysTick backend, which is exactly why it exists.
-- **The SysTick backend claims the SysTick interrupt vector**, so it collides
+- The SysTick backend claims the SysTick interrupt vector, so it collides
   with a hand-rolled `millis()` or anything else wanting that vector.
-- **SysTick-backend pulse width degrades with interrupt latency.** Code that
+- SysTick-backend pulse width degrades with interrupt latency. Code that
   disables interrupts, or a higher-priority handler that runs long, shows up as
   servo jitter. Use the TIM2 backend if you cannot accept that.
-- **Configuration mistakes are yours to catch.** Only statically detectable ones
+- Configuration mistakes are yours to catch. Only statically detectable ones
   fail the build. A legal-but-wrong `SERVO_TIM2_REMAP` will happily drive the
   wrong pin. This is a deliberate trade for size and is the ch32fun convention.
-- **One pulse-width range for all servos.** Mixed servos wanting different
+- One pulse-width range for all servos. Mixed servos wanting different
   ranges should use `writeMicroseconds()` directly.
 
 ## Board support
 
-**Verified on CH32V003 hardware** with a scope, logic analyzer and WCH-LinkE —
+Verified on CH32V003 hardware with a scope, logic analyzer and WCH-LinkE:
 both backends, pulse widths and clamping, detach and re-attach, four servos
 sequenced on non-timer pins, frame stability, ramp rate and mid-flight
 retargeting, plus register read-back confirming the SysTick backend never enables
 TIM2's clock.
 
-No other CH32 family is supported: all
-MCU-dependent code sits in one clearly marked portability block in `Servo.h`,
-and building for any other target fails at compile time with a message pointing
-at it. That is deliberate — an unported family would silently misconfigure
-registers, which is worse than not building.
+Every other target's status is disclosed separately from that, because
+*should work* and *verified on hardware* are not the same claim:
 
-Porting means adding one branch to that block. Pull requests welcome, with the
-family you actually tested named in the PR.
+| Chips | SysTick backend | TIM2 backend |
+|---|---|---|
+| CH32V003 | Hardware-verified | Hardware-verified |
+| CH32V002, CH32V004, CH32V005, CH32V006, CH32V007 | Should work: same SysTick peripheral and interrupt logic as the verified CH32V003 path. Unverified. | Not ported yet |
+| CH32V10x | Should work: its SysTick peripheral is shaped differently, handled accordingly. Unverified. | Not ported yet |
+| CH32V20x (all packages, incl. D8/D8W), CH32V30x, CH32L103, CH32X03x | Should work: same SysTick peripheral and interrupt logic as the verified CH32V003 path. Unverified. | Not ported yet |
+| CH32H41x | Not supported | Not supported |
+| CH5xx family (CH551, CH552, CH570-CH592) | Not supported (no TIM2) | Not supported (no TIM2) |
+
+"Should work" means the SysTick backend uses the same peripheral, the same
+compare-match interrupt scheme, and the same GPIO configuration constants as
+the hardware-verified CH32V003 path. That was reasoned from WCH datasheets,
+reference manuals, and ch32fun's own register headers and examples, not
+confirmed against real silicon. Only a CH32V003 is on hand. If you have one of
+these boards, a report, working or not, is worth more than any amount of
+further reasoning from documentation.
+
+All MCU-dependent code sits in one clearly marked portability block in
+`Servo.h`. The TIM2 backend additionally needs a per-family output-remap pin
+table that doesn't exist yet for anything but CH32V003. Building the TIM2
+backend for an unported family fails at compile time with a message pointing
+at the portability block, rather than silently misconfiguring registers.
+
+## Work in progress
+
+TIM2 hardware-PWM support for the other chip families above is planned, one
+family at a time: CH32X03x next, then CH32V10x/V20x/V30x/L103, then CH32V00x
+(CH32V002, CH32V004-007) last. Pull requests welcome, with the family you
+actually tested named in the PR.
 
 ## Issues and pull requests
 

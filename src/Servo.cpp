@@ -93,6 +93,38 @@ void servo_frame_tick(void)
 
 #if SERVO_USE_SYSTICK
 
+// CH32V10x's SysTick is a different peripheral shape from every other target
+// this backend supports: no SR status register to clear at all, and CMP is a
+// 64-bit register that ch32fun's own reference example
+// (ch32fun/examples_v10x/systick_irq) writes one byte at a time rather than
+// as a single store -- "In CH32V103 we can write systick regs only in 8bit
+// manner." That example never touches SR either, so clearing nothing is the
+// verified behavior, not an oversight. These two macros isolate that one
+// family's quirk so the rest of this backend reads identically for every
+// other target. Macros rather than inline functions: on every other target
+// this expands back to the exact same `SysTick->CMP = <expr>;` token
+// sequence that was here before, which matters because the two write sites
+// in SysTick_Handler below are identical enough for the compiler to fold
+// into one shared store -- a wrapper function, even always_inline, disturbed
+// that folding and cost 4 bytes on CH32V003.
+#if defined(CH32V10x)
+#define SERVO_SYSTICK_CLEAR_PENDING() ((void)0) // no SR on this target
+#define SERVO_SYSTICK_WRITE_CMP(v) do { \
+		uint64_t v_ = (v); \
+		SysTick->CMP0 = (uint8_t)v_; \
+		SysTick->CMP1 = (uint8_t)(v_ >> 8); \
+		SysTick->CMP2 = (uint8_t)(v_ >> 16); \
+		SysTick->CMP3 = (uint8_t)(v_ >> 24); \
+		SysTick->CMP4 = (uint8_t)(v_ >> 32); \
+		SysTick->CMP5 = (uint8_t)(v_ >> 40); \
+		SysTick->CMP6 = (uint8_t)(v_ >> 48); \
+		SysTick->CMP7 = (uint8_t)(v_ >> 56); \
+	} while (0)
+#else
+#define SERVO_SYSTICK_CLEAR_PENDING() (SysTick->SR = 0)
+#define SERVO_SYSTICK_WRITE_CMP(v) (SysTick->CMP = (v))
+#endif
+
 // Index of the servo whose pulse is currently HIGH. SERVO_MAX_SERVOS means we
 // are in the idle gap that closes each frame.
 static volatile uint8_t s_slot = SERVO_MAX_SERVOS;
@@ -102,7 +134,7 @@ static uint8_t s_running;
 extern "C" void SysTick_Handler(void) SERVO_ISR_ATTR;
 void SysTick_Handler(void)
 {
-	SysTick->SR = 0;
+	SERVO_SYSTICK_CLEAR_PENDING();
 
 	uint8_t i;
 	if (s_slot >= SERVO_MAX_SERVOS)
@@ -132,12 +164,12 @@ void SysTick_Handler(void)
 		funDigitalWrite(s->pin, FUN_HIGH);
 		// Advancing CMP by an exact delta, never recomputing it from "now",
 		// is what keeps pulse widths free of accumulated interrupt latency.
-		SysTick->CMP += (uint32_t)s->current * SERVO_TICKS_PER_US;
+		SERVO_SYSTICK_WRITE_CMP(SysTick->CMP + (uint32_t)s->current * SERVO_TICKS_PER_US);
 	}
 	else
 	{
 		s_slot = SERVO_MAX_SERVOS;
-		SysTick->CMP = s_frame + SERVO_FRAME_TICKS;
+		SERVO_SYSTICK_WRITE_CMP(s_frame + SERVO_FRAME_TICKS);
 	}
 }
 
@@ -152,8 +184,14 @@ static void servo_engine_start(void)
 	// is what lets Delay_Us(), funSysTick32() and a TIM2-based library such as
 	// Ticker keep working underneath us. Note in particular: no STRE (that
 	// would turn on auto-reload) and no write to CNT.
-	SysTick->CMP = SysTick->CNT + 100 * SERVO_TICKS_PER_US;
-	SysTick->SR = 0;
+	//
+	// Reading the counter through funSysTick32() rather than SysTick->CNT
+	// directly reuses ch32fun's own portable accessor -- it already resolves
+	// to the right field name per family (CNT vs CNTL on CH32V10x/X03x), so
+	// this file doesn't need to know that on top of what SERVO_SYSTICK_WRITE_CMP
+	// above already tracks for writes.
+	SERVO_SYSTICK_WRITE_CMP(funSysTick32() + 100 * SERVO_TICKS_PER_US);
+	SERVO_SYSTICK_CLEAR_PENDING();
 	SysTick->CTLR |= SYSTICK_CTLR_STIE;
 	NVIC_EnableIRQ(SysTick_IRQn);
 }
@@ -179,7 +217,9 @@ static void servo_tim2_init(void)
 	if (s_tim2_up) return;
 	s_tim2_up = 1;
 
-	RCC->APB2PCENR |= RCC_APB2Periph_AFIO;
+	// AFIO's clock is already on: this is only ever called from attach_ch(),
+	// which enables it (alongside the pin's own GPIO port) before reaching
+	// here. TIM2's clock is this backend's own to enable.
 	RCC->APB1PCENR |= RCC_APB1Periph_TIM2;
 
 	AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_TIM2_REMAP)

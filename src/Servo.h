@@ -18,6 +18,15 @@
 // Configuration is entirely compile-time. There are no runtime pin tables and
 // no runtime conflict checks: a wrong #define gives you wrong hardware, not a
 // diagnostic. Where a mistake is statically detectable it fails the build.
+//
+// The two backends do not support the same set of targets. SERVO_USE_SYSTICK
+// builds for every CH32 family ch32fun defines a TIM2 register layout for; the
+// default TIM2 backend additionally needs a per-family output-remap pin
+// table, which only exists for CH32V003 so far. Building the TIM2 backend for
+// an unported family fails at compile time rather than misconfiguring
+// registers. See the portability block below, and the README's "Board
+// support" section for which targets have actually been run on hardware
+// versus only built from datasheets.
 
 #include "ch32fun.h"
 
@@ -89,22 +98,57 @@
 // ---------------------------------------------------------------------------
 // Portability. This block is the ONLY MCU-dependent code in the library.
 // Porting to another CH32 family means adding a branch here.
+//
+// The two backends need different things from a target, so they are gated
+// separately instead of behind one combined check:
+//
+//   - The SysTick backend below needs only primitives confirmed identical
+//     across every ch32fun family that has a TIM2 peripheral -- the push-pull
+//     output config and the port clock-enable bit pattern. It never touches
+//     TIM2 itself, so it doesn't need anything family-specific beyond that.
+//   - The TIM2 hardware-PWM backend additionally needs a per-family output
+//     remap table, which is real datasheet work done one family at a time.
+//     Only CH32V003's has been done (and verified on hardware).
 // ---------------------------------------------------------------------------
 
-#if defined(CH32V003)
-	#define SERVO_AF_PP       GPIO_CFGLR_OUT_10Mhz_AF_PP  // timer-driven output
+// Common to every ch32fun family with a TIM2 -- this list mirrors ch32fun.h's
+// own family-dispatch chain (which register header it #includes) minus
+// CH32H41x, which Ticker (a sibling TIM2-based library) excludes for having
+// an incompatible clock/interrupt architecture. Confirmed identical across
+// ch32v003hw.h, ch32x00xhw.h, ch32x03xhw.h, ch32v10xhw.h, ch32l103hw.h,
+// ch32v20xhw.h and ch32v30xhw.h.
+#if defined(CH32V003) || defined(CH32V002) || defined(CH32V00x) \
+ || defined(CH32X03x) || defined(CH32V10x) || defined(CH32L103) \
+ || defined(CH32V20x) || defined(CH32V30x)
 	#define SERVO_OUT_PP      GPIO_CFGLR_OUT_10Mhz_PP     // plain output (detach)
-	#define SERVO_TIM2_REMAP_SHIFT 8                      // AFIO->PCFR1[9:8]
-	#define SERVO_TIM2_MAX_CH 4
 	// Port clock bit in RCC->APB2PCENR for a ch32fun packed pin: GPIOA is bit 2,
 	// and the packed pin's high nibble is the port index (A=0, B=1, C=2, D=3).
+	// Same bit pattern on every family listed above.
 	#define SERVO_PORT_CLK(pin) (1u << (2 + ((pin) >> 4)))
 #else
-	#error "Servo: unsupported target MCU. Only CH32V003 has been ported and \
-verified on hardware. Adding a family means adding a branch to the portability \
-block in Servo.h -- see the README's Portability section. Building an unported \
-target would silently misconfigure registers, so this is a hard error."
+	#error "Servo: unsupported target MCU -- ch32fun does not define a TIM2 \
+register family for it, or Servo has not added it to the portability block \
+below. See the README's Portability section. Building an unported target \
+would silently misconfigure registers, so this is a hard error."
 #endif
+
+// TIM2 remap table, needed only when the TIM2 backend is actually selected --
+// the SysTick backend above never touches TIM2, so an unported family is not
+// an error there.
+#if !SERVO_USE_SYSTICK
+#if defined(CH32V003)
+	#define SERVO_AF_PP       GPIO_CFGLR_OUT_10Mhz_AF_PP  // timer-driven output
+	#define SERVO_TIM2_REMAP_SHIFT 8                      // AFIO->PCFR1[9:8]
+	#define SERVO_TIM2_MAX_CH 4
+#else
+	#error "Servo: the TIM2 hardware-PWM backend has only been ported to \
+CH32V003 -- its per-family output remap table doesn't exist yet for this \
+target. Build with SERVO_USE_SYSTICK=1 instead, or add this family's remap \
+table to the portability block in Servo.h -- see the README's Portability \
+section. Building an unported target would silently misconfigure registers, \
+so this is a hard error."
+#endif
+#endif // !SERVO_USE_SYSTICK
 
 // ---------------------------------------------------------------------------
 // Derived constants and static configuration checks
@@ -142,10 +186,40 @@ static_assert((uint32_t)SERVO_MAX_SERVOS * SERVO_MAX_US < SERVO_FRAME_US,
 	"Servo: SERVO_MAX_SERVOS * SERVO_MAX_US must be strictly less than "
 	"SERVO_FRAME_US -- the sequential pulse chain needs an idle gap to close "
 	"each frame. Reduce SERVO_MAX_SERVOS or SERVO_MAX_US.");
+
+// SERVO_TICKS_PER_US (= ch32fun's DELAY_US_TIME) is FUNCONF_SYSTEM_CORE_CLOCK
+// divided by 8,000,000 by default, or by 1,000,000 under
+// FUNCONF_SYSTICK_USE_HCLK=1 (forced to the /8,000,000 form on CH32V10x
+// regardless of that flag). Plain integer division: below the resulting
+// floor it truncates to 0, and every pulse width and frame length in this
+// backend would collapse to a zero-tick compare instead of just losing
+// precision. Every HSI/HSE value and PLL multiplier ch32fun documents a
+// default for lands well above this floor -- it only bites with a
+// deliberately low core clock (PLL disabled plus a low-frequency source).
+static_assert(SERVO_TICKS_PER_US >= 1,
+	"Servo: the effective SysTick rate is below 1 MHz, so SERVO_TICKS_PER_US "
+	"truncates to zero and this backend cannot generate pulses at all. Needs "
+	"a core clock of at least 8 MHz with the default SysTick/HCLK-8 divider "
+	"(FUNCONF_SYSTICK_USE_HCLK unset or 0), or at least 1 MHz with "
+	"FUNCONF_SYSTICK_USE_HCLK=1. Raise FUNCONF_PLL_MULTIPLIER or switch to a "
+	"faster HSI/HSE source.");
 #else
 static_assert(SERVO_MAX_SERVOS <= SERVO_TIM2_MAX_CH,
 	"Servo: the TIM2 backend has one channel per servo, so SERVO_MAX_SERVOS "
 	"cannot exceed 4. Use SERVO_USE_SYSTICK for more.");
+
+// SERVO_TIM2_PSC divides FUNCONF_SYSTEM_CORE_CLOCK down to a 1 MHz tick so
+// that a CH*CVR write is the pulse width in microseconds with no scaling. A
+// core clock that isn't an exact multiple of 1,000,000 Hz would silently
+// scale every commanded pulse width by the same fixed factor instead of
+// failing loudly. Every HSI/HSE value and PLL multiplier ch32fun documents a
+// default for is a whole number of megahertz -- this only breaks with a
+// custom, non-whole-megahertz crystal value.
+static_assert(FUNCONF_SYSTEM_CORE_CLOCK % 1000000 == 0,
+	"Servo: FUNCONF_SYSTEM_CORE_CLOCK must be an exact multiple of "
+	"1,000,000 Hz for the TIM2 backend's 1 MHz tick. A non-exact core clock "
+	"(typically from a custom, non-whole-megahertz HSE crystal value) would "
+	"scale every commanded pulse width by a fixed, silent factor.");
 #endif
 
 // ---------------------------------------------------------------------------
