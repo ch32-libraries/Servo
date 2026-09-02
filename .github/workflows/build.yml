@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tim2-examples:
+    # TIM2 backend is CH32V003-only (Servo.h #errors on every other target),
+    # so these three examples never need a matrix.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install RISC-V toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf
+
+      - name: Build
+        run: |
+          set -e
+          for dir in servo_sweep servo_multi servo_smooth; do
+            echo "== $dir =="
+            make -C "examples/$dir" "$dir.elf"
+          done
+
+  systick-backend:
+    # SysTick backend targets every family Servo.h supports (see AGENTS.md
+    # roadmap); build each so a portability regression fails CI even without
+    # the hardware to flash it.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcu:
+          - CH32V003
+          - CH32V002
+          - CH32V004
+          - CH32V005
+          - CH32V006
+          - CH32V007
+          - CH32V10x
+          - CH32X03x
+          - CH32L103
+          - CH32V20x
+          - CH32V30x
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install RISC-V toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf
+
+      - name: Build
+        run: make -C examples/servo_systick TARGET_MCU=${{ matrix.mcu }} servo_systick.elf
