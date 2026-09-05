@@ -12,7 +12,7 @@ int main(void)
 	SystemInit();
 
 	Servo servo;
-	servo.attach(PD4);
+	servo.attach(SERVO_TIM2_CH1_PIN);
 	servo.setSpeed(1000);   // us of pulse width per second: a full sweep in 1 s
 
 	while (1)
