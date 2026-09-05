@@ -7,9 +7,34 @@ on:
 
 jobs:
   tim2-examples:
-    # TIM2 backend is CH32V003-only (Servo.h #errors on every other target),
-    # so these three examples never need a matrix.
+    # One build per genuinely distinct compiled shape, not per chip. The TIM2
+    # backend now has real per-family branches in Servo.h's portability block,
+    # so unlike before this job needs a matrix:
+    #
+    #   CH32V003  rv32ec, its own pin table, the only hardware-verified target
+    #   CH32V002  rv32ec_zmmul, its own table, plus the TIM_* -> TIM2_* aliases
+    #   CH32V007  same as V002 except remap group 2 puts CH2 on PB3, not PC2 --
+    #             the one per-part difference in any table here
+    #   CH32V103  rv32imac, first user of the table shared by V10x/V20x/V30x/L103
+    #   CH32V203  same arch and table as V103, but different ch32fun startup and
+    #             clock setup, so it compiles to a different size
+    #   CH32V307  rv32imafc -- the only float ABI
+    #   CH32L103  shared table, but reaches it through AFIO_PCFR1_TIM2_RM rather
+    #             than AFIO_PCFR1_TIM2_REMAP
+    #   CH32X035  its own table, and the only family that needs BDTR.MOE set
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcu:
+          - CH32V003
+          - CH32V002
+          - CH32V007
+          - CH32V103
+          - CH32V203
+          - CH32V307
+          - CH32L103
+          - CH32X035
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,14 +47,62 @@ jobs:
         run: |
           set -e
           for dir in servo_sweep servo_multi servo_smooth; do
-            echo "== $dir =="
-            make -C "examples/$dir" "$dir.elf"
+            echo "== $dir on ${{ matrix.mcu }} =="
+            make -C "examples/$dir" "$dir.elf" TARGET_MCU=${{ matrix.mcu }}
+          done
+
+  remap-groups:
+    # The matrix above varies only TARGET_MCU, so every job there builds remap
+    # group 0. This job exercises the other tables, and with them the 3-bit
+    # shift/mask arithmetic that only CH32V00x and CH32X03x use.
+    #
+    # servo_sweep attaches CH1, so it can only cover groups that route one.
+    # That is every group on CH32V002/V203/L103, but only groups 0 and 2 on
+    # CH32X035 -- its other groups put CH1 on a pin ch32fun cannot name. Those
+    # are covered by the compile-time failure instead, which is what they are
+    # supposed to produce.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install RISC-V toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf libnewlib-dev
+
+      - name: Build every reachable remap group
+        run: |
+          set -e
+          build() {
+            echo "== $1 remap $2 =="
+            rm -f examples/servo_sweep/servo_sweep.elf
+            make -C examples/servo_sweep servo_sweep.elf \
+              TARGET_MCU="$1" EXTRA_CFLAGS="-DSERVO_TIM2_REMAP=$2"
+          }
+          for g in 0 1 2 3 4 5 6 7; do build CH32V002 "$g"; done
+          build CH32V007 2
+          for g in 0 1 2 3; do build CH32V203 "$g"; done
+          for g in 0 1 2 3; do build CH32L103 "$g"; done
+          for g in 0 2;     do build CH32X035 "$g"; done
+
+      - name: Groups with no usable channel must fail
+        run: |
+          set -e
+          for t in "CH32X035 4" "CH32L103 4"; do
+            set -- $t
+            rm -f examples/servo_sweep/servo_sweep.elf
+            if make -C examples/servo_sweep servo_sweep.elf \
+                 TARGET_MCU="$1" EXTRA_CFLAGS="-DSERVO_TIM2_REMAP=$2" 2>/dev/null; then
+              echo "ERROR: $1 remap $2 built, but has no usable TIM2 channel"; exit 1
+            fi
+            echo "ok: $1 remap $2 correctly fails to build"
           done
 
   systick-backend:
-    # One build per genuinely distinct compiled shape, not per chip: Servo.h's
-    # portability block is a single #if covering every family (no per-family
-    # branch), so CH32V002/004-007 compile identically (rv32ec_zmmul) and so do
+    # SERVO_USE_SYSTICK excludes the whole TIM2 half of the portability block,
+    # so the per-family branches the TIM2 job exercises are not compiled here
+    # and this matrix is unchanged: one build per distinct compiled shape.
+    # CH32V002/004-007 compile identically (rv32ec_zmmul) and so do
     # CH32X03x/CH32L103/CH32V20x (rv32imac, ilp32, no family-specific code).
     # CH32V003 (rv32ec, no zmmul), CH32V10x (the one family with an actual
     # #if defined(CH32V10x) branch in Servo.cpp) and CH32V30x (the only float

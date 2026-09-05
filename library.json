@@ -1,7 +1,7 @@
 {
   "name": "Servo",
-  "version": "0.1.0",
-  "description": "RC servo control for CH32V-family RISC-V microcontrollers, built directly on ch32fun. Two interchangeable pulse-generation backends selected at build time: TIM2 hardware PWM (up to 4 servos, no interrupts at all) or a SysTick compare-match backend that consumes no general-purpose timer, leaving TIM2 free for the rest of your firmware. Optional interrupt-driven smooth motion needs no polling from your main loop. Integer-only, no dynamic allocation, no Arduino core, no HAL.",
+  "version": "0.2.0",
+  "description": "RC servo control for CH32V-family RISC-V microcontrollers, built directly on ch32fun. Two interchangeable pulse-generation backends selected at build time: TIM2 hardware PWM (up to 4 servos, no interrupts at all) or a SysTick compare-match backend that consumes no general-purpose timer, leaving TIM2 free for the rest of your firmware. Optional interrupt-driven smooth motion needs no polling from your main loop. Integer-only, no dynamic allocation, no Arduino core, no HAL. Builds for every CH32 family ch32fun supports that has a TIM2 -- CH32V003, CH32V00x, CH32V10x, CH32V20x, CH32V30x, CH32L103 and CH32X03x -- with per-family pin tables taken from the WCH reference manuals. Verified on real CH32V003 hardware; support for the other families is documented from manufacturer documentation and has not been run on silicon.",
   "keywords": [
     "servo",
     "pwm",
@@ -9,6 +9,12 @@
     "systick",
     "timer",
     "ch32v003",
+    "ch32v00x",
+    "ch32v10x",
+    "ch32v20x",
+    "ch32v30x",
+    "ch32l103",
+    "ch32x035",
     "ch32fun",
     "riscv",
     "wch",

@@ -222,8 +222,13 @@ static void servo_tim2_init(void)
 	// here. TIM2's clock is this backend's own to enable.
 	RCC->APB1PCENR |= RCC_APB1Periph_TIM2;
 
-	AFIO->PCFR1 = (AFIO->PCFR1 & ~AFIO_PCFR1_TIM2_REMAP)
-	            | ((uint32_t)SERVO_TIM2_REMAP << SERVO_TIM2_REMAP_SHIFT);
+	// Masked on the way in as well as out: the remap field is not the top of
+	// PCFR1 on every family (on CH32X03x TIM3's field sits directly above it),
+	// so an out-of-range SERVO_TIM2_REMAP must not be allowed to spill. Both
+	// operands are compile-time constants, so this folds to one immediate.
+	AFIO->PCFR1 = (AFIO->PCFR1 & ~SERVO_TIM2_REMAP_MASK)
+	            | (((uint32_t)SERVO_TIM2_REMAP << SERVO_TIM2_REMAP_SHIFT)
+	               & SERVO_TIM2_REMAP_MASK);
 
 	// A 1 MHz tick makes CH*CVR the pulse width in microseconds outright, so
 	// writeMicroseconds() is a single store with no scaling arithmetic.
@@ -237,6 +242,13 @@ static void servo_tim2_init(void)
 	TIM2->INTFR = (uint16_t)~TIM_UIF;
 	TIM2->DMAINTENR |= TIM_UIE;
 	NVIC_EnableIRQ(TIM2_IRQn);
+#endif
+
+#ifdef SERVO_TIM2_NEEDS_MOE
+	// CH32X03x only: its TIM2 is an advanced-control timer, so the channel
+	// outputs stay disconnected until the main output enable is set. Every
+	// other family's TIM2 is general-purpose and has no BDTR at all.
+	TIM2->BDTR |= TIM_MOE;
 #endif
 
 	TIM2->CTLR1 |= TIM_CEN;
@@ -306,9 +318,22 @@ void Servo::apply(uint16_t us)
 #if SERVO_USE_SYSTICK
 	(void)us;                       // the handler reads `current` directly
 #else
-	// CH1CVR..CH4CVR are four contiguous 32-bit registers, so this is one
-	// indexed store rather than a four-way switch.
-	if (ch) (&TIM2->CH1CVR)[ch - 1] = us;
+	// CH1CVR..CH4CVR sit at TIM2 + 0x34 with a 4-byte stride. That is the
+	// architectural layout, identical in CH32V003RM, CH32V00XRM, CH32X035RM,
+	// CH32xRM, CH32FV2x_V3xRM and CH32L103RM -- but it is NOT what indexing
+	// ch32fun's TIM_TypeDef gives you, on two of the seven families:
+	//
+	//   - CH32V10x/V20x/V30x declare the four members `uint16_t`, so
+	//     `(&TIM2->CH1CVR)[n]` strides 2 bytes and channels 2-4 land on
+	//     padding or on the wrong register.
+	//   - CH32L103's header interleaves TIM4 aliases ahead of them, putting its
+	//     CH1CVR at struct offset 0x38 -- one register too far, so every
+	//     channel is off by one and channel 4 would write the pulse width
+	//     into BDTR.
+	//
+	// So address the register directly rather than trusting the struct. Still
+	// one indexed store, and unchanged on CH32V003.
+	if (ch) *(volatile uint32_t *)((uintptr_t)TIM2 + 0x34u + 4u * (ch - 1u)) = us;
 #endif
 }
 
