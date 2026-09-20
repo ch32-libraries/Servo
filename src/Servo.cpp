@@ -306,7 +306,7 @@ Servo::Servo()
 #if SERVO_SMOOTH
 	  step(0),
 #endif
-	  pin(0), attached(0)
+	  pin(0), attached(0), inverted(0)
 #if !SERVO_USE_SYSTICK
 	  , ch(0)
 #endif
@@ -411,6 +411,8 @@ void Servo::detach()
 void Servo::writeMicroseconds(uint16_t us)
 {
 	us = servo_clamp(us);
+	// Mirror inside the clamped range; angle writes funnel through here too.
+	if (inverted) us = SERVO_MIN_US + SERVO_MAX_US - us;
 	target = us;
 #if SERVO_SMOOTH
 	// While attached the ramp carries `current` to the target from the ISR.
@@ -443,13 +445,9 @@ void Servo::write(uint8_t angle)
 {
 	// The top endpoint is handled exactly rather than trusting the rounded
 	// scale, so write(SERVO_ANGLE_MAX) always lands precisely on SERVO_MAX_US.
-	if (angle >= SERVO_ANGLE_MAX)
-	{
-		writeMicroseconds(SERVO_MAX_US);
-		return;
-	}
-	writeMicroseconds((uint16_t)(SERVO_MIN_US
-		+ (((uint32_t)angle * SERVO_ANGLE_Q16) >> 16)));
+	// One writeMicroseconds() call site, so its inlined body is not duplicated.
+	writeMicroseconds(angle >= SERVO_ANGLE_MAX ? SERVO_MAX_US
+		: (uint16_t)(SERVO_MIN_US + (((uint32_t)angle * SERVO_ANGLE_Q16) >> 16)));
 }
 #endif
 

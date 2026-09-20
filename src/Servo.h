@@ -612,7 +612,16 @@ public:
 
 	// The commanded position, after clamping. Under SERVO_SMOOTH this is the
 	// target, which is what was commanded -- not the in-flight position.
-	uint16_t readMicroseconds() const { return target; }
+	uint16_t readMicroseconds() const
+	{
+		return inverted ? (uint16_t)(SERVO_MIN_US + SERVO_MAX_US - target) : target;
+	}
+
+	// Mirrors the travel for both write() and writeMicroseconds(): with `true`,
+	// write(0) goes to SERVO_MAX_US and write(SERVO_ANGLE_MAX) to SERVO_MIN_US.
+	// False by default, and false is exactly the un-inverted behaviour. Does not
+	// move the servo; it applies from the next write.
+	void setInverted(bool invert) { inverted = invert; }
 
 #if SERVO_ENABLE_ANGLE
 	// 0..SERVO_ANGLE_MAX mapped linearly onto SERVO_MIN_US..SERVO_MAX_US.
@@ -659,6 +668,7 @@ private:
 	uint8_t pin;
 #endif
 	uint8_t attached;               // 0/1; never read from a handler
+	uint8_t inverted;               // 0/1
 #if !SERVO_USE_SYSTICK
 	SERVO_ISR_SHARED uint8_t ch;    // TIM2 channel 1..4; read by apply()
 #endif
