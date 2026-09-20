@@ -51,7 +51,7 @@ exactly the projects that need it most.
 | Servos | up to 4, one per channel² | 8+, limited by frame time |
 | Pins | TIM2 channel pins only | any GPIO |
 | Pulse accuracy | exact, immune to your code | ±10 µs, subject to interrupt latency |
-| Flash | 224 B | 484 B |
+| Flash | 200 B | 484 B |
 
 ¹ Unless `SERVO_SMOOTH` is enabled, which needs the TIM2 update interrupt to
 advance ramps.
@@ -70,7 +70,7 @@ need more than four servos, or you need a pin that is not a TIM2 channel.
   poll in your main loop.
 - Microsecond and integer-degree APIs. The degree API compiles out if unused.
 - Integer-only, no dynamic allocation, no runtime pin tables, no runtime
-  validation. 224 B of flash and 8 B per servo at its smallest.
+  validation. 200 B of flash and 8 B per servo at its smallest.
 
 ## Prerequisites
 
@@ -121,6 +121,7 @@ bool     attach(uint8_t pin);           // ch32fun pin constant; false if regist
 void     detach();                      // stops pulses, leaves the line LOW
 void     writeMicroseconds(uint16_t us);// clamped to SERVO_MIN_US..SERVO_MAX_US
 uint16_t readMicroseconds() const;      // the commanded position, after clamping
+void     setInverted(bool invert);      // mirror travel for write() and writeMicroseconds(); default false
 
 void     write(uint8_t angle);          // SERVO_ENABLE_ANGLE (on by default)
 
@@ -328,14 +329,27 @@ Measured on CH32V003 at `-Os -flto`, as the increase over an empty
 `SystemInit()`-only firmware. "Static RAM" is the library's own state; each
 `Servo` object costs `sizeof(Servo)` on top, wherever you put it.
 
-| Configuration | Flash | Static RAM | `sizeof(Servo)` |
-|---|---|---|---|
-| TIM2 backend | 224 B | 4 B | 8 B |
-| TIM2 + degree API | 324 B | 4 B | 8 B |
-| TIM2 + smoothing | 688 B | 20 B | 10 B |
-| SysTick backend | 484 B | 32 B | 6 B |
-| SysTick + degree API | 556 B | 32 B | 6 B |
-| SysTick + smoothing | 640 B | 32 B | 8 B |
+The last two columns are the same behaviour written by hand with no library: one
+servo on PD4, the same clamp, the same 1 MHz tick and 20 ms frame, the same
+ramp, and the same reciprocal-multiply degree conversion. Hand-written RAM is
+all of it, since there is no object. Subtract to get what the library costs you
+over doing it yourself.
+
+| Configuration | Flash | Static RAM | `sizeof(Servo)` | Hand-written flash | Hand-written RAM |
+|---|---|---|---|---|---|
+| TIM2 backend | 200 B | 4 B | 8 B | 156 B | 0 B |
+| TIM2 + degree API | 292 B | 4 B | 8 B | 244 B | 0 B |
+| TIM2 + smoothing | 704 B | 20 B | 10 B | 384 B | 8 B |
+| SysTick backend | 484 B | 32 B | 8 B | 236 B | 12 B |
+| SysTick + degree API | 572 B | 32 B | 8 B | 320 B | 12 B |
+| SysTick + smoothing | 700 B | 32 B | 10 B | 396 B | 16 B |
+
+The hand-written columns drive one servo. The library's static RAM is sized for
+`SERVO_MAX_SERVOS` (4 by default); setting it to 1 brings SysTick to 20 B and
+TIM2 + smoothing to 8 B, at 420 B and 632 B of flash. What the library adds
+beyond a single hand-written servo is the registry, attach/detach, and room for
+more servos. Calling `setInverted()` adds 20 to 40 B of flash; unused, it costs
+none.
 
 Smoothing costs the most because it adds an interrupt handler, not because of
 the ramp math. The degree API costs about 100 B because this core has no hardware
